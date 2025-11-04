@@ -1,19 +1,16 @@
 #!/bin/bash
 
 # MySQL 변수 정의
-MYSQL_HOST="localhost"
-MYSQL_ADMIN="root"
-ADMIN_PWD=""
 DB_NAME="webdb"
 TABLE_NAME="members"
-MYSQL_USER="webuser"
-MYSQL_PWD="password"
+DB_USER="webuser"
+USER_PWD="password"
 
 # SQL 명령어 정의
 SQL_COMMANDS=$(cat <<EOF
 CREATE DATABASE ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
-CREATE USER '${MYSQL_USER}'@'%' IDENTIFIED BY '${MYSQL_PWD}';
-GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${MYSQL_USER}'@'%';
+CREATE USER '${DB_USER}'@'%' IDENTIFIED BY '${USER_PWD}';
+GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'%';
 FLUSH PRIVILEGES;
 USE ${DB_NAME};
 CREATE TABLE ${TABLE_NAME} (
@@ -27,4 +24,4 @@ EOF
 )
 
 # MySQL 접속 및 실행
-mysql -u ${MYSQL_ADMIN} -h ${MYSQL_HOST} -e "${SQL_COMMANDS}"
+mysql -uroot -e "${SQL_COMMANDS}"
