@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# Install MariaDB for Amazon Linux 2023
+yum install -y mariadb105-server
+systemctl start mariadb & systemctl enable mariadb
+
 # MySQL 변수 정의
 MYSQL_HOST="localhost"
 MYSQL_ADMIN="root"
