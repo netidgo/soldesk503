@@ -1,0 +1,169 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Default EC2 stack for the Project
+
+Parameters:
+  ProjectName:
+    Type: String
+    Description: Project Name
+  RegionName:
+    Type: String
+    Description: Region Name
+    AllowedValues:
+      - seoul
+      - saopaulo
+
+Mappings:
+  CidrMap:
+    ap-northeast-2:
+      VpcCidr: 10.1.0.0/16
+      PubSn1Cidr: 10.1.1.0/24
+      PubSn2Cidr: 10.1.2.0/24
+      WebSn3Cidr: 10.1.3.0/24
+      WebSn4Cidr: 10.1.4.0/24
+    sa-east-1:
+      VpcCidr: 10.2.0.0/16
+      PubSn1Cidr: 10.2.1.0/24
+      PubSn2Cidr: 10.2.2.0/24
+      WebSn3Cidr: 10.2.3.0/24
+      WebSn4Cidr: 10.2.4.0/24
+  AmiMap:
+    ap-northeast-2:
+      Ami: ami-0cf1ead55e8259a57
+    sa-east-1:
+      Ami: ami-02040ca09ead0f460
+
+Resources:
+# Web Application Load Balancer & Security Group
+  WebAlbSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !ImportValue VpcId
+      GroupDescription: !Sub "${AWS::Region} Web ALB Security Group"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key : Name
+          Value : !Sub "${ProjectName}-${RegionName}-web-alb-sg"
+
+  WebAlb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      Name: !Sub "${ProjectName}-${RegionName}-web-alb"
+      SecurityGroups:
+        - !Ref WebAlbSg
+      Subnets:
+        - !ImportValue PubSn1Id
+        - !ImportValue PubSn2Id
+
+  WebAlbTg:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "${ProjectName}-${RegionName}-web-alb-tg"
+      Port: 80
+      Protocol: HTTP
+      HealthCheckPath: '/'
+      HealthCheckIntervalSeconds: 10
+      HealthyThresholdCount: 3
+      UnhealthyThresholdCount: 3
+      VpcId: !ImportValue VpcId
+      Tags:
+        - Key : Name
+          Value : !Sub "${ProjectName}-${RegionName}-web-alb-tg"
+
+  WebAlbListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref WebAlbTg
+      LoadBalancerArn: !Ref WebAlb
+      Port: 80
+      Protocol: HTTP
+
+# LaunchTemplate & Security Group
+  WebSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !ImportValue VpcId
+      GroupDescription: !Sub "${AWS::Region} Web Instance Security Group"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !FindInMap [CidrMap, ap-northeast-2, PubSn2Cidr]
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref WebAlbSg
+        - IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 10.0.0.0/8
+      Tags:
+        - Key : Name
+          Value : !Sub "${ProjectName}-${RegionName}-web-sg"
+
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${ProjectName}-${RegionName}-lt"
+      VersionDescription: version 1.0
+      LaunchTemplateData:
+        ImageId: !FindInMap [AmiMap, !Ref "AWS::Region", Ami]
+        InstanceType: t3.micro
+        KeyName: !Sub "${RegionName}-key"
+        SecurityGroupIds:
+          - !Ref WebSg
+        UserData:
+          Fn::Base64: |
+            #!/bin/bash
+            yum install -y httpd php php-mbstring php-pdo php-mysqlnd php-json php-gd
+            systemctl start httpd
+            systemctl enable httpd
+            wget https://github.com/netidgo/soldesk503/raw/refs/heads/main/web_sample.zip
+            mv web_sample.zip /var/www/html/
+            unzip /var/www/html/web_sample.zip
+            rm -f /var/www/html/web_sample.zip
+            chmod +x /var/www/html/create_index.sh
+            sh /var/www/html/create_index.sh
+            sed -i "s/localhost/10.2.2.100/g" /var/www/html/config.php
+            sed -i "s/root/webuser/g" /var/www/html/config.php
+            sed -i "s/1234/password/g" /var/www/html/config.php
+            sed -i "s/netid/webdb/g" /var/www/html/config.php
+
+# Auto Scaling Group & Scaling Policy
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub "${ProjectName}-${RegionName}-asg"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      VPCZoneIdentifier:
+        - !ImportValue WebSn3Id
+        - !ImportValue WebSn4Id
+      TargetGroupARNs:
+        - !Ref WebAlbTg
+      DesiredCapacity: 2
+      MinSize: 2
+      MaxSize: 4
+
+  ScalingPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: 50
+...
